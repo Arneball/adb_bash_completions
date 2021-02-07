@@ -2,11 +2,16 @@ package main
 
 import (
 	"bufio"
+	"context"
+	"fmt"
 	"github.com/posener/complete"
 	"io/fs"
+	"net"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 )
 
 func predict(f func(a complete.Args) []string) complete.PredictFunc {
@@ -14,8 +19,16 @@ func predict(f func(a complete.Args) []string) complete.PredictFunc {
 }
 
 func main() {
+	//fmt.Printf("%q", getDevices(complete.Args{}))
+	//os.Exit(0)
+	//fmt.Printf("%+v\n", getHost(complete.Args{}))
+	//println("Done")
+	//os.Exit(0)
 	c := complete.New("adb", complete.Command{
 		Sub: complete.Commands{
+			"disconnect": complete.Command{
+				Args: predict(getDevices),
+			},
 			"uninstall": complete.Command{
 				Args: predict(getPackages),
 			},
@@ -24,6 +37,14 @@ func main() {
 			},
 			"shell": complete.Command{
 				Args: predict(shellExpansions),
+			},
+			"connect": complete.Command{
+				Args: predict(getHost),
+			},
+			"tcpip": complete.Command{
+				Args: predict(func(a complete.Args) []string {
+					return []string{"5555"}
+				}),
 			},
 		},
 		Args: predict(func(a complete.Args) []string {
@@ -41,14 +62,21 @@ func shellExpansions(complete.Args) []string {
 }
 
 func getDevices(complete.Args) (out []string) {
-	b, err := exec.Command("adb", "devices").StdoutPipe()
+	cmd := exec.Command("adb", "devices")
+	b, err := cmd.StdoutPipe()
 	if err != nil {
+		panic(err)
+	}
+	if err := cmd.Start(); err != nil {
 		panic(err)
 	}
 	scanner := bufio.NewScanner(b)
 	scanner.Scan()
 	for scanner.Scan() {
-		out = append(out, strings.Split(scanner.Text(), "\t")[0])
+		elems := strings.Split(scanner.Text(), "\t")[0]
+		if elems != "" {
+			out = append(out, elems)
+		}
 	}
 	return
 }
@@ -79,4 +107,51 @@ func getPackages(complete.Args) (out []string) {
 		}
 	}
 	return
+}
+
+func getHost(complete.Args) (out []string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	var lock sync.Mutex
+	var wg sync.WaitGroup
+	wg.Add(255 - 2)
+	for i := 2; i < 255; i++ {
+		go func(i int) {
+			result := doActualPortscan(i, ctx)
+			if result != "" {
+				lock.Lock()
+				out = append(out, result)
+				lock.Unlock()
+			}
+
+			wg.Done()
+		}(i)
+	}
+	wg.Wait()
+	return out
+}
+
+func doActualPortscan(i int, ctx context.Context) string {
+	result := make(chan string)
+	go func() {
+		ipAddress := fmt.Sprintf("192.168.1.%d:5555", i)
+		complete.Log("Dialing %s", ipAddress)
+		_, err := net.Dial("tcp", ipAddress)
+		if err != nil {
+			complete.Log("%d sket sig", i)
+			close(result)
+		} else {
+			complete.Log("%d gick bra", i)
+			result <- ipAddress
+		}
+	}()
+	select {
+	case <-ctx.Done():
+		return ""
+	case str, ok := <-result:
+		if !ok {
+			return ""
+		}
+		return str
+	}
 }
