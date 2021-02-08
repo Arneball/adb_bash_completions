@@ -148,10 +148,7 @@ func doActualPortscan(i int, ctx context.Context) string {
 	select {
 	case <-ctx.Done():
 		return ""
-	case str, ok := <-result:
-		if !ok {
-			return ""
-		}
+	case str := <-result:
 		return str
 	}
 }
