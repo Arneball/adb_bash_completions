@@ -95,8 +95,12 @@ func install(complete.Args) (out []string) {
 }
 
 func getPackages(complete.Args) (out []string) {
-	b, err := exec.Command("adb", "shell", "pm", "list", "packages").StdoutPipe()
+	cmd := exec.Command("adb", "shell", "pm", "list", "packages")
+	b, err := cmd.StdoutPipe()
 	if err != nil {
+		panic(err)
+	}
+	if err = cmd.Start(); err != nil {
 		panic(err)
 	}
 	scanner := bufio.NewScanner(b)
@@ -136,13 +140,17 @@ func doActualPortscan(i int, ctx context.Context) string {
 	go func() {
 		ipAddress := fmt.Sprintf("192.168.1.%d:5555", i)
 		complete.Log("Dialing %s", ipAddress)
-		_, err := net.Dial("tcp", ipAddress)
+		conn, err := net.Dial("tcp", ipAddress)
 		if err != nil {
 			complete.Log("%d sket sig", i)
 			close(result)
 		} else {
 			complete.Log("%d gick bra", i)
 			result <- ipAddress
+			err = conn.Close()
+			if err != nil {
+				complete.Log("close failed %s\n", err)
+			}
 		}
 	}()
 	select {
