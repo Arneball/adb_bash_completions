@@ -14,8 +14,10 @@ import (
 	"time"
 )
 
-func predict(f func(a complete.Args) []string) complete.PredictFunc {
-	return f
+func argPrediction(f func(a complete.Args) []string) complete.Command {
+	return complete.Command{
+		Args: complete.PredictFunc(f),
+	}
 }
 
 func main() {
@@ -26,52 +28,40 @@ func main() {
 	//os.Exit(0)
 	c := complete.New("adb", complete.Command{
 		Sub: complete.Commands{
-			"disconnect": complete.Command{
-				Args: predict(getDevices),
-			},
-			"uninstall": complete.Command{
-				Args: predict(getPackages),
-			},
-			"install": complete.Command{
-				Args: predict(install),
-			},
-			"shell": complete.Command{
+			"disconnect": argPrediction(getDevices),
+			"uninstall":  argPrediction(getPackages),
+			"install":    argPrediction(getApks),
+			"shell": {
 				Sub: map[string]complete.Command{
 					"pm": {
 						Sub: map[string]complete.Command{
-							"clear": {
-								Args: predict(getPackages),
-							},
+							"clear": argPrediction(getPackages),
 						},
 					},
 				},
-				Args: predict(shellExpansions),
-			},
-			"connect": complete.Command{
-				Args: predict(getHost),
-			},
-			"tcpip": complete.Command{
-				Args: predict(func(a complete.Args) []string {
-					return []string{"5555"}
+				Args: complete.PredictFunc(func(args complete.Args) []string {
+					return []string{"am broadcast -a", "pm clear"}
 				}),
 			},
+			"connect": argPrediction(getHost),
+			"tcpip": argPrediction(func(a complete.Args) []string {
+				return []string{"5555"}
+			}),
 		},
-		Args: predict(func(a complete.Args) []string {
+		Args: complete.PredictFunc(func(a complete.Args) []string {
 			return []string{"uninstall", "tcpip", "install", "devices", "shell"}
 		}),
 		Flags: map[string]complete.Predictor{
-			"-s": predict(getDevices),
+			"-s": complete.PredictFunc(getDevices),
 		},
 	})
 	c.Complete()
 }
 
-func shellExpansions(complete.Args) []string {
-	return []string{"am broadcast -a", "pm clear"}
-}
-
 func getDevices(complete.Args) (out []string) {
-	cmd := exec.Command("adb", "devices")
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "adb", "devices")
 	b, err := cmd.StdoutPipe()
 	if err != nil {
 		panic(err)
@@ -90,7 +80,7 @@ func getDevices(complete.Args) (out []string) {
 	return
 }
 
-func install(complete.Args) (out []string) {
+func getApks(complete.Args) (out []string) {
 	err := filepath.WalkDir(".", func(path string, d fs.DirEntry, err error) error {
 		if !d.IsDir() && strings.HasSuffix(d.Name(), ".apk") {
 			out = append(out, path)
@@ -104,7 +94,9 @@ func install(complete.Args) (out []string) {
 }
 
 func getPackages(complete.Args) (out []string) {
-	cmd := exec.Command("adb", "shell", "pm", "list", "packages")
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "adb", "shell", "pm", "list", "packages")
 	b, err := cmd.StdoutPipe()
 	if err != nil {
 		panic(err)
@@ -163,7 +155,6 @@ func doActualPortScan(ctx context.Context, i int, ch chan<- string) {
 	}()
 	select {
 	case <-ctx.Done():
-	case str := <-result:
-		ch <- str
+	case ch <- <-result:
 	}
 }
