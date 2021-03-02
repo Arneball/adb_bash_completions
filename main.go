@@ -14,10 +14,20 @@ import (
 	"time"
 )
 
-func argPrediction(f func(a complete.Args) []string) complete.Command {
+func anyOf(strs ...string) complete.Predictor {
+	return complete.PredictFunc(func(a complete.Args) []string {
+		return strs
+	})
+}
+
+func withArgs(p complete.Predictor) complete.Command {
 	return complete.Command{
-		Args: complete.PredictFunc(f),
+		Args: p,
 	}
+}
+
+func computeArgs(f func(a complete.Args) []string) complete.Command {
+	return withArgs(complete.PredictFunc(f))
 }
 
 func main() {
@@ -28,29 +38,23 @@ func main() {
 	//os.Exit(0)
 	c := complete.New("adb", complete.Command{
 		Sub: complete.Commands{
-			"disconnect": argPrediction(getDevices),
-			"uninstall":  argPrediction(getPackages),
-			"install":    argPrediction(getApks),
+			"disconnect": computeArgs(getDevices),
+			"uninstall":  computeArgs(getPackages),
+			"install":    computeArgs(getApks),
 			"shell": {
 				Sub: map[string]complete.Command{
 					"pm": {
 						Sub: map[string]complete.Command{
-							"clear": argPrediction(getPackages),
+							"clear": computeArgs(getPackages),
 						},
 					},
 				},
-				Args: complete.PredictFunc(func(args complete.Args) []string {
-					return []string{"am broadcast -a", "pm clear"}
-				}),
+				Args: anyOf("am broadcast -a", "pm clear"),
 			},
-			"connect": argPrediction(getHost),
-			"tcpip": argPrediction(func(a complete.Args) []string {
-				return []string{"5555"}
-			}),
+			"connect": computeArgs(getHost),
+			"tcpip":   withArgs(anyOf("5555")),
 		},
-		Args: complete.PredictFunc(func(a complete.Args) []string {
-			return []string{"uninstall", "tcpip", "install", "devices", "shell"}
-		}),
+		Args: anyOf("uninstall", "tcpip", "install", "devices", "shell"),
 		Flags: map[string]complete.Predictor{
 			"-s": complete.PredictFunc(getDevices),
 		},
@@ -144,6 +148,7 @@ func doActualPortScan(ctx context.Context, i int, ch chan<- string) {
 		conn, err := net.Dial("tcp", ipAddress)
 		if err != nil {
 			complete.Log("%d sket sig", i)
+			close(result)
 		} else {
 			complete.Log("%d gick bra", i)
 			err = conn.Close()
@@ -155,6 +160,9 @@ func doActualPortScan(ctx context.Context, i int, ch chan<- string) {
 	}()
 	select {
 	case <-ctx.Done():
-	case ch <- <-result:
+	case value, ok := <-result:
+		if ok {
+			ch <- value
+		}
 	}
 }
