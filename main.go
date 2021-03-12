@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/binary"
 	"fmt"
 	"github.com/posener/complete"
 	"io/fs"
@@ -10,7 +11,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -119,50 +119,89 @@ func getPackages(complete.Args) (out []string) {
 }
 
 func getHost(complete.Args) (out []string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
-	var wg sync.WaitGroup
-	wg.Add(255 - 2)
 	ch := make(chan string)
-	for i := 2; i < 255; i++ {
-		go func(i int) {
-			doActualPortScan(ctx, i, ch)
-			wg.Done()
-		}(i)
+	for _, iterator := range addrIterators() {
+		if iterator.Start.String()[:4] == "127." {
+			continue
+		}
+		start := binary.BigEndian.Uint32(iterator.Start)
+		end := binary.BigEndian.Uint32(iterator.End)
+		for i := start; i < end; i++ {
+			ip := make(net.IP, 4)
+			binary.BigEndian.PutUint32(ip, i)
+			go doActualPortScan(ctx, ip, ch)
+		}
 	}
-	go func() {
-		wg.Wait()
-		close(ch)
-	}()
-	for s := range ch {
-		out = append(out, s)
+	for {
+		select {
+		case <-ctx.Done():
+			return out
+		case s := <-ch:
+			out = append(out, s)
+		}
+	}
+}
+
+func doActualPortScan(ctx context.Context, ip net.IP, ch chan<- string) {
+	ipAddress := fmt.Sprintf("%s:5555", ip)
+	complete.Log("Dialing %s", ipAddress)
+	var d net.Dialer
+	conn, err := d.DialContext(ctx, "tcp", ipAddress)
+	if err == nil {
+		_ = conn.Close()
+		ch <- ipAddress
+	} else {
+		complete.Log("close failed %s\n", err)
+	}
+}
+
+func addrIterators() (out []AddrIterator) {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		complete.Log("localAddresses: %+v\n", err.Error())
+		return nil
+	}
+	for _, i := range ifaces {
+		addrs, err := i.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, a := range addrs {
+			switch v := a.(type) {
+			case *net.IPNet:
+				meh := createAddrIterator(v.IP)
+				if meh != nil {
+					out = append(out, *meh)
+				}
+			}
+		}
 	}
 	return out
 }
 
-func doActualPortScan(ctx context.Context, i int, ch chan<- string) {
-	result := make(chan string, 1)
-	go func() {
-		ipAddress := fmt.Sprintf("192.168.1.%d:5555", i)
-		complete.Log("Dialing %s", ipAddress)
-		conn, err := net.Dial("tcp", ipAddress)
-		if err != nil {
-			complete.Log("%d sket sig", i)
-			close(result)
-		} else {
-			complete.Log("%d gick bra", i)
-			err = conn.Close()
-			result <- ipAddress
-			if err != nil {
-				complete.Log("close failed %s\n", err)
-			}
-		}
-	}()
-	select {
-	case <-ctx.Done():
-	case value, ok := <-result:
-		if ok {
-			ch <- value
-		}
+func createAddrIterator(ip net.IP) *AddrIterator {
+	start := ip.To4()
+	if start == nil {
+		return nil
 	}
+	end := make([]byte, len(start))
+	copy(end, start)
+
+	start[3] = 0
+	end[3] = 255
+	return &AddrIterator{
+		Start: start,
+		End:   end,
+	}
+}
+
+type AddrIterator struct {
+	Start net.IP
+	End   net.IP
+}
+
+func (a AddrIterator) String() string {
+	return fmt.Sprintf("start: [%+v], end: [%+v]", a.Start, a.End)
 }
