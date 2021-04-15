@@ -14,12 +14,6 @@ import (
 	"time"
 )
 
-func anyOf(strs ...string) complete.Predictor {
-	return complete.PredictFunc(func(a complete.Args) []string {
-		return strs
-	})
-}
-
 func withArgs(p complete.Predictor) complete.Command {
 	return complete.Command{
 		Args: p,
@@ -27,7 +21,12 @@ func withArgs(p complete.Predictor) complete.Command {
 }
 
 func computeArgs(f func(a complete.Args) []string) complete.Command {
-	return withArgs(complete.PredictFunc(f))
+	return complete.Command{
+		Args: complete.PredictFunc(f),
+		Flags: map[string]complete.Predictor{
+			"-s": complete.PredictFunc(getDevices),
+		},
+	}
 }
 
 func main() {
@@ -49,13 +48,13 @@ func main() {
 						},
 					},
 				},
-				Args: anyOf("am broadcast -a", "pm clear"),
+				Args: complete.PredictSet("am broadcast -a", "pm clear"),
 			},
 			"connect": computeArgs(getHost),
-			"tcpip":   withArgs(anyOf("5555")),
+			"tcpip":   withArgs(complete.PredictSet("5555")),
 		},
-		Args: anyOf("uninstall", "tcpip", "install", "devices", "shell"),
-		Flags: map[string]complete.Predictor{
+		//Args: anyOf("uninstall", "tcpip", "install", "devices", "shell"),
+		GlobalFlags: map[string]complete.Predictor{
 			"-s": complete.PredictFunc(getDevices),
 		},
 	})
@@ -97,10 +96,15 @@ func getApks(complete.Args) (out []string) {
 	return
 }
 
-func getPackages(complete.Args) (out []string) {
+func getPackages(arguments complete.Args) (out []string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "adb", "shell", "pm", "list", "packages")
+	args := []string{"shell", "pm", "list", "packages"}
+	host := getDeviceFromArgs(arguments)
+	if host != "" {
+		args = append([]string{"-s", host}, args...)
+	}
+	cmd := exec.CommandContext(ctx, "adb", args...)
 	b, err := cmd.StdoutPipe()
 	if err != nil {
 		panic(err)
@@ -122,7 +126,10 @@ func getHost(complete.Args) (out []string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
 	ch := make(chan string)
+	const SIZE = 200
+	queue := make(chan bool, SIZE)
 	for _, iterator := range addrIterators() {
+		complete.Log("AddrIt: %s\n", iterator)
 		if iterator.Start.String()[:4] == "127." {
 			continue
 		}
@@ -131,7 +138,7 @@ func getHost(complete.Args) (out []string) {
 		for i := start; i < end; i++ {
 			ip := make(net.IP, 4)
 			binary.BigEndian.PutUint32(ip, i)
-			go doActualPortScan(ctx, ip, ch)
+			go doActualPortScan(ctx, queue, ip, ch)
 		}
 	}
 	for {
@@ -144,8 +151,13 @@ func getHost(complete.Args) (out []string) {
 	}
 }
 
-func doActualPortScan(ctx context.Context, ip net.IP, ch chan<- string) {
+func doActualPortScan(ctx context.Context, queue chan bool, ip net.IP, ch chan<- string) {
 	ipAddress := fmt.Sprintf("%s:5555", ip)
+	queue <- true
+	defer func() {
+		<-queue
+		complete.Log("Queue drained")
+	}()
 	complete.Log("Dialing %s", ipAddress)
 	var d net.Dialer
 	conn, err := d.DialContext(ctx, "tcp", ipAddress)
@@ -153,7 +165,7 @@ func doActualPortScan(ctx context.Context, ip net.IP, ch chan<- string) {
 		_ = conn.Close()
 		ch <- ipAddress
 	} else {
-		complete.Log("close failed %s\n", err)
+		complete.Log("dial failed %s", err)
 	}
 }
 
@@ -204,4 +216,13 @@ type AddrIterator struct {
 
 func (a AddrIterator) String() string {
 	return fmt.Sprintf("start: [%+v], end: [%+v]", a.Start, a.End)
+}
+
+func getDeviceFromArgs(a complete.Args) string {
+	for i, s := range a.Completed {
+		if s == "-s" {
+			return a.Completed[i+1]
+		}
+	}
+	return ""
 }
