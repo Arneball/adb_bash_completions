@@ -1,3 +1,7 @@
+github.com/arneball/complete v1.2.3 h1:D/d0LCUQdsG/arTuz/ygisdJTUeJaq1+ncSbt67tuuU=
+github.com/arneball/complete v1.2.3/go.mod h1:WZIdtGGp+qx0sLrYKtIRAruyNpv6hFCicSgv7Sy7s/s=
+github.com/arneball/complete v1.2.4-0.20210415224408-a6a001178d79 h1:jUlHXi7CFJDpIDdC8ZAJaqXoyz/PHg91g/WjRtD1dW4=
+github.com/arneball/complete v1.2.4-0.20210415224408-a6a001178d79/go.mod h1:WZIdtGGp+qx0sLrYKtIRAruyNpv6hFCicSgv7Sy7s/s=
 github.com/davecgh/go-spew v1.1.0 h1:ZDRjVQ15GmhC3fiQ8ni8+OwkZQO4DARzQgrnXU1Liz8=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/hashicorp/errwrap v1.0.0 h1:hLrqtEDnRye3+sgx6z4qVLNuviH3MR5aQ0ykNJa/UYA=

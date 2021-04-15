@@ -219,10 +219,8 @@ func (a AddrIterator) String() string {
 }
 
 func getDeviceFromArgs(a complete.Args) string {
-	for i, s := range a.Completed {
-		if s == "-s" {
-			return a.Completed[i+1]
-		}
+	if strs, ok := a.GlobalArguments["-s"]; ok && len(strs) > 0 {
+		return strs[0]
 	}
 	return ""
 }
